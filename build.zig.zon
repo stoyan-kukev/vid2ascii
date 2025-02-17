@@ -1,5 +1,5 @@
 .{
-    .name = "vid_to_ascii",
+    .name = "vid2ascii",
     .version = "0.0.0",
     .dependencies = .{},
     .paths = .{
