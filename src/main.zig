@@ -15,6 +15,7 @@ pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
     var stdout = std.io.getStdOut().writer();
     var args = std.process.args();
     if (!args.skip()) {
@@ -22,17 +23,53 @@ pub fn main() !void {
         return;
     }
     const input_file = args.next().?;
+
+    // First, extract audio to a temporary file
+    // This approach ensures audio plays regardless of ASCII processing speed
+    const temp_audio = "/tmp/vid2ascii_audio.wav";
+    const extract_audio_args = [_][]const u8{
+        "ffmpeg",
+        "-y", // Overwrite output file if it exists
+        "-i",
+        input_file,
+        "-vn", // Disable video
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        temp_audio,
+    };
+
+    var extract_audio = std.process.Child.init(&extract_audio_args, allocator);
+    extract_audio.stderr_behavior = .Ignore;
+    try extract_audio.spawn();
+    _ = try extract_audio.wait();
+
+    // Start playing audio in background
+    const play_audio_args = [_][]const u8{
+        "ffplay",
+        "-nodisp", // Don't display video
+        "-autoexit", // Exit when playback is done
+        temp_audio,
+    };
+
+    var audio_child = std.process.Child.init(&play_audio_args, allocator);
+    audio_child.stderr_behavior = .Ignore;
+    try audio_child.spawn();
+
     const term_size = try terminal.getTerminalSizeEven();
     const width: usize = term_size.cols;
     const height: usize = term_size.rows;
     const frame_size: usize = width * height;
 
-    // Set up ffmpeg
+    // Set up ffmpeg for video processing
     const size_args = try std.fmt.allocPrint(allocator, "scale={}:{},format=gray", .{ width, height });
     defer allocator.free(size_args);
     const ffmpeg_args = [_][]const u8{
         "ffmpeg",
-        "-re",
+        "-re", // Real-time rate (important for sync)
         "-i",
         input_file,
         "-vf",
@@ -43,11 +80,12 @@ pub fn main() !void {
         "gray",
         "pipe:1",
     };
-    var child = std.process.Child.init(&ffmpeg_args, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-    try child.spawn();
-    const ffmpeg_stdout = child.stdout.?;
+
+    var video_child = std.process.Child.init(&ffmpeg_args, allocator);
+    video_child.stdout_behavior = .Pipe;
+    video_child.stderr_behavior = .Ignore;
+    try video_child.spawn();
+    const ffmpeg_stdout = video_child.stdout.?;
 
     // Initialize terminal
     try stdout.writeAll("\x1b[2J\x1b[H\x1b[?25l"); // Clear screen, move cursor to home position, hide cursor
@@ -57,8 +95,6 @@ pub fn main() !void {
     defer allocator.free(frame_buffer);
 
     // Double-buffering for ASCII output
-    // Instead of allocating and freeing the ASCII buffer every frame,
-    // we'll pre-allocate two buffers and swap between them
     var front_buffer = try allocator.alloc(u8, (width + 1) * height);
     defer allocator.free(front_buffer);
     var back_buffer = try allocator.alloc(u8, (width + 1) * height);
@@ -86,8 +122,7 @@ pub fn main() !void {
             ascii_index += 1;
         }
 
-        // Swap buffers (by swapping pointers)
-        // Note: In Zig, we need to actually swap the slice contents
+        // Swap buffers
         std.mem.swap([]u8, &front_buffer, &back_buffer);
 
         // Render the front buffer
@@ -95,7 +130,13 @@ pub fn main() !void {
         try stdout.writeAll(front_buffer[0..ascii_index]);
     }
 
-    // Wait for ffmpeg to exit and reset terminal
-    _ = try child.wait();
+    // Clean up
+    _ = try video_child.wait();
+    _ = audio_child.kill() catch {};
+    _ = try audio_child.wait();
+
+    // Clean up temp file
+    std.fs.cwd().deleteFile(temp_audio) catch {};
+
     try stdout.writeAll("\x1b[?25h"); // Show cursor again
 }
