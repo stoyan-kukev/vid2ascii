@@ -22,11 +22,11 @@ pub fn getTerminalSizeEven() !TerminalSize {
 fn unixGetSize() !TerminalSize {
     const stdout = std.io.getStdOut();
 
-    var win_size: std.os.linux.winsize = undefined;
+    var win_size: std.posix.winsize = undefined;
     const rc = std.os.linux.ioctl(stdout.handle, std.os.linux.T.IOCGWINSZ, @intFromPtr(&win_size));
     if (rc != 0) {
         return error.GetTerminalSizeFailed;
     }
 
-    return .{ .cols = win_size.ws_col, .rows = win_size.ws_row };
+    return .{ .cols = win_size.col, .rows = win_size.row };
 }

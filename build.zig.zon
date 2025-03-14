@@ -1,5 +1,5 @@
 .{
-    .name = "vid2ascii",
+    .name = .vid2ascii,
     .version = "0.0.0",
     .dependencies = .{},
     .paths = .{
@@ -7,4 +7,5 @@
         "build.zig.zon",
         "src",
     },
+    .fingerprint = 0x8b47f6d59f0a9ae3,
 }
